@@ -24,8 +24,8 @@ Find a tag's commit sha with
 
 Each release is a tag whose commit adds two files on top of `main`:
 
-- **`release.env`** names the release tag, this repository, and the source
-  commit it was built from.
+- **`release.env`** names the release tag, this repository, the engine
+  version, and the source commit it was built from.
 - **`SHA256SUMS`** lists the sha256 of every binary in that release.
 
 The action reads both from the commit you pinned, downloads the binary for
@@ -41,9 +41,11 @@ asset therefore fails instead of running. `main` carries neither file, so
 | `yamlgraph-linux-arm64`  | Linux arm64: GitHub-hosted, Ubicloud            |
 | `yamlgraph-darwin-arm64` | Apple-silicon macOS: GitHub-hosted, self-hosted |
 
-Binaries are static (`CGO_ENABLED=0`) and built with `-trimpath`.
-`yamlgraph version` prints the release version: the engine version plus the
-first 12 hex digits of the source commit.
+Binaries are static (`CGO_ENABLED=0`) and built with `-trimpath`. A release
+tag is the engine version plus the first 12 hex digits of the source commit.
+The binary itself reports only the engine version, exactly as a source build
+of that commit does: `yamlgraph index` records it in every `_index.yaml`, so
+any other value would make every committed index look stale.
 
 ## Publishing a release
 
