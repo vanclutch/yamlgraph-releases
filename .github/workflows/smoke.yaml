@@ -50,14 +50,14 @@ jobs:
         id: yamlgraph
         uses: ./
 
-      - name: The verified binary is the yamlgraph on PATH and reports its release
+      - name: The verified binary is the yamlgraph on PATH and reports its engine version
         env:
           ACTION_OUTPUT_PATH: ${{ steps.yamlgraph.outputs.path }}
         run: |
           set -euo pipefail
           . ./release.env
           test "$(command -v yamlgraph)" = "$ACTION_OUTPUT_PATH"
-          test "$(yamlgraph version)" = "yamlgraph ${YAMLGRAPH_RELEASE_TAG#v}"
+          test "$(yamlgraph version)" = "yamlgraph ${YAMLGRAPH_ENGINE_VERSION}"
 
       - name: Stage a copy of the action whose checksums do not match
         run: |
