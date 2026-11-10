@@ -1,0 +1,78 @@
+# Put a released yamlgraph CLI on PATH, verified before it runs.
+#
+# Pin this action to a release tag's commit sha, never to a branch:
+#
+#     - uses: vanclutch/yamlgraph-releases@<release commit sha> # <release tag>
+#     - run: yamlgraph check --root docs/roadmaps/<topic>
+#
+# A release commit carries release.env (which release to download) and
+# SHA256SUMS (what each binary must hash to). Both come from the pinned
+# commit, so the pin fixes the binary: a replaced release asset fails the
+# checksum and never runs. main carries no release, so `@main` fails on
+# purpose.
+#
+# Runs on every build SHA256SUMS lists: Linux x64 and arm64 (GitHub-hosted,
+# Ubicloud and self-hosted pool runners) and Apple-silicon macOS. Needs curl,
+# plus sha256sum or shasum.
+name: yamlgraph
+description: Download a released yamlgraph CLI, verify its checksum, and add it to PATH.
+outputs:
+  path:
+    description: Absolute path to the verified yamlgraph binary.
+    value: ${{ steps.install.outputs.path }}
+runs:
+  using: composite
+  steps:
+    - name: Download and verify yamlgraph
+      id: install
+      shell: bash
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+      run: |
+        set -euo pipefail
+        release_env="${ACTION_PATH}/release.env"
+        checksums="${ACTION_PATH}/SHA256SUMS"
+        if [ ! -f "$release_env" ] || [ ! -f "$checksums" ]; then
+          echo "::error::This commit of the action carries no release. Pin a release tag's commit sha, not a branch."
+          exit 1
+        fi
+        # shellcheck source=/dev/null
+        . "$release_env"
+
+        case "$RUNNER_OS" in
+          Linux) goos=linux ;;
+          macOS) goos=darwin ;;
+          *) goos="$RUNNER_OS" ;;
+        esac
+        case "$RUNNER_ARCH" in
+          X64) goarch=amd64 ;;
+          ARM64) goarch=arm64 ;;
+          *) goarch="$RUNNER_ARCH" ;;
+        esac
+        asset="yamlgraph-${goos}-${goarch}"
+        expected_sha256="$(awk -v asset="$asset" '$2 == asset { print $1 }' "$checksums")"
+        if [ -z "$expected_sha256" ]; then
+          echo "::error::${YAMLGRAPH_RELEASE_TAG} has no yamlgraph build for ${RUNNER_OS}/${RUNNER_ARCH}: SHA256SUMS lists no ${asset}."
+          exit 1
+        fi
+
+        bin_dir="${RUNNER_TEMP}/yamlgraph-bin"
+        binary="${bin_dir}/yamlgraph"
+        mkdir -p "$bin_dir"
+        curl --fail --silent --show-error --location --retry 3 --output "$binary" \
+          "${GITHUB_SERVER_URL}/${YAMLGRAPH_RELEASE_REPOSITORY}/releases/download/${YAMLGRAPH_RELEASE_TAG}/${asset}"
+        if command -v sha256sum >/dev/null 2>&1; then
+          actual_sha256="$(sha256sum "$binary" | awk '{ print $1 }')"
+        else
+          actual_sha256="$(shasum -a 256 "$binary" | awk '{ print $1 }')"
+        fi
+        if [ "$actual_sha256" != "$expected_sha256" ]; then
+          rm -f "$binary"
+          echo "::error::${asset} from ${YAMLGRAPH_RELEASE_TAG} hashes to ${actual_sha256}, but this commit of the action pins ${expected_sha256}. Refusing to run it."
+          exit 1
+        fi
+
+        chmod +x "$binary"
+        echo "$bin_dir" >> "$GITHUB_PATH"
+        echo "path=${binary}" >> "$GITHUB_OUTPUT"
+        echo "yamlgraph ${YAMLGRAPH_RELEASE_TAG} (${asset}, built from ${YAMLGRAPH_SOURCE_REPOSITORY}@${YAMLGRAPH_SOURCE_COMMIT}) verified and on PATH"

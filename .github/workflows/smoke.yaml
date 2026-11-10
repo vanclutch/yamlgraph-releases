@@ -1,0 +1,72 @@
+name: smoke
+# Proves the action on every runner a consumer uses, and proves it refuses a
+# binary whose checksum does not match. This repository is public, so
+# GitHub-hosted runners cost nothing here; it does not follow the
+# CI_LINUX_PROVIDER routing map its private consumers use.
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  smoke:
+    name: smoke (${{ matrix.runner }})
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm, macos-15]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      # A release tag's commit carries its pins. main and pull requests carry
+      # none, so they test this action against the newest release.
+      - name: Take the newest release's pins when this commit carries none
+        run: |
+          set -euo pipefail
+          if [ ! -f release.env ]; then
+            newest_release_tag="$(git tag --list 'v*' --sort=-creatordate | head -n 1)"
+            if [ -z "$newest_release_tag" ]; then
+              echo "::error::No release tag exists yet; publish one first."
+              exit 1
+            fi
+            git show "${newest_release_tag}:release.env" > release.env
+            git show "${newest_release_tag}:SHA256SUMS" > SHA256SUMS
+          fi
+
+      - name: Run the action
+        id: yamlgraph
+        uses: ./
+
+      - name: The verified binary is the yamlgraph on PATH and reports its release
+        env:
+          ACTION_OUTPUT_PATH: ${{ steps.yamlgraph.outputs.path }}
+        run: |
+          set -euo pipefail
+          . ./release.env
+          test "$(command -v yamlgraph)" = "$ACTION_OUTPUT_PATH"
+          test "$(yamlgraph version)" = "yamlgraph ${YAMLGRAPH_RELEASE_TAG#v}"
+
+      - name: Stage a copy of the action whose checksums do not match
+        run: |
+          set -euo pipefail
+          mkdir mismatched-checksums
+          cp action.yml release.env mismatched-checksums/
+          sed -E "s/^[0-9a-f]{64}/$(printf '%064d' 0)/" SHA256SUMS > mismatched-checksums/SHA256SUMS
+
+      - name: Run the copy with mismatched checksums
+        id: mismatched
+        continue-on-error: true
+        uses: ./mismatched-checksums
+
+      - name: The copy with mismatched checksums refused the binary
+        env:
+          MISMATCHED_OUTCOME: ${{ steps.mismatched.outcome }}
+        run: test "$MISMATCHED_OUTCOME" = failure
